@@ -98,6 +98,7 @@ export function DashboardClient({
   const [loading, setLoading] = useState(false);
   const [actionBusyId, setActionBusyId] = useState<string>("");
   const [voteDebug, setVoteDebug] = useState<VoteDebug | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string>("");
 
   const [newTitle, setNewTitle] = useState("");
   const [newVoteMode, setNewVoteMode] = useState<PollSummary["voteMode"]>("NUMBERS");
@@ -108,8 +109,6 @@ export function DashboardClient({
     defaultOptionInputs(2, "NUMBERS")
   );
 
-  const [channelLogin, setChannelLogin] = useState(workspace.channelLogin);
-  const [channelDisplayName, setChannelDisplayName] = useState(workspace.channelDisplayName);
   const [botFilterEnabled, setBotFilterEnabled] = useState(workspace.botFilterEnabled);
   const [blacklistUsers, setBlacklistUsers] = useState(workspace.blacklistUsers.join(","));
   const [inviteExpiryDays, setInviteExpiryDays] = useState("7");
@@ -194,6 +193,20 @@ export function DashboardClient({
       socket.close();
     };
   }, [fetchPolls, workspace.id]);
+
+  useEffect(() => {
+    if (!copiedKey) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCopiedKey("");
+    }, 1300);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [copiedKey]);
 
   const livePoll = useMemo(() => polls.find((poll) => poll.state === "LIVE") ?? null, [polls]);
 
@@ -345,8 +358,6 @@ export function DashboardClient({
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          channelLogin,
-          channelDisplayName,
           botFilterEnabled,
           blacklistUsers: blacklistUsers
             .split(",")
@@ -440,9 +451,12 @@ export function DashboardClient({
     }
   };
 
-  const copyToClipboard = async (value: string): Promise<void> => {
+  const copyToClipboard = async (value: string, key?: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(value);
+      if (key) {
+        setCopiedKey(key);
+      }
     } catch {
       // noop
     }
@@ -474,18 +488,6 @@ export function DashboardClient({
             <div className="muted">Top option (live)</div>
             <div>{livePoll ? topOptionLabel(livePoll) : "-"}</div>
           </div>
-        </div>
-
-        <div className="row" style={{ marginTop: "0.8rem" }}>
-          <span className="mono">{workspaceState.overlayUrl}</span>
-          <button type="button" className="secondary" onClick={() => copyToClipboard(workspaceState.overlayUrl)}>
-            Copy base URL
-          </button>
-          <a href={workspaceState.overlayUrl} target="_blank" rel="noreferrer">
-            <button type="button" className="secondary">
-              Open base overlay
-            </button>
-          </a>
         </div>
 
         <details style={{ marginTop: "0.9rem" }}>
@@ -591,14 +593,24 @@ export function DashboardClient({
 
         <div className="row" style={{ marginTop: "0.8rem" }}>
           <span className="mono">{overlayUrlWithOptions}</span>
-          <button type="button" className="secondary" onClick={() => copyToClipboard(overlayUrlWithOptions)}>
-            Copy configured URL
+          <button
+            type="button"
+            className={`secondary copy-feedback${copiedKey === "configured-overlay-url" ? " copied" : ""}`}
+            onClick={() => copyToClipboard(overlayUrlWithOptions, "configured-overlay-url")}
+          >
+            {copiedKey === "configured-overlay-url" ? "Copied URL" : "Copy URL"}
           </button>
           <a href={overlayUrlWithOptions} target="_blank" rel="noreferrer">
             <button type="button" className="secondary">
               Open configured overlay
             </button>
           </a>
+          <span className="help-tip" tabIndex={0} aria-label="How to add this URL in OBS">
+            ?
+            <span className="help-tip-content">
+              In OBS, add a Browser source, paste this URL, set width and height, then click OK.
+            </span>
+          </span>
         </div>
 
         {voteDebug ? (
@@ -872,21 +884,6 @@ export function DashboardClient({
           <h2 className="section-title">Workspace Settings</h2>
 
           <form onSubmit={saveWorkspaceSettings} className="grid" style={{ gap: "0.7rem" }}>
-            <div className="grid two">
-              <label>
-                Channel login
-                <input value={channelLogin} onChange={(event) => setChannelLogin(event.target.value)} />
-              </label>
-
-              <label>
-                Channel display name
-                <input
-                  value={channelDisplayName}
-                  onChange={(event) => setChannelDisplayName(event.target.value)}
-                />
-              </label>
-            </div>
-
             <label className="row" style={{ alignItems: "center" }}>
               <input
                 type="checkbox"
@@ -936,8 +933,12 @@ export function DashboardClient({
           {latestInviteUrl ? (
             <div className="row" style={{ marginTop: "0.65rem" }}>
               <span className="mono">{latestInviteUrl}</span>
-              <button type="button" className="secondary" onClick={() => copyToClipboard(latestInviteUrl)}>
-                Copy invite URL
+              <button
+                type="button"
+                className={`secondary copy-feedback${copiedKey === "invite-url" ? " copied" : ""}`}
+                onClick={() => copyToClipboard(latestInviteUrl, "invite-url")}
+              >
+                {copiedKey === "invite-url" ? "Copied URL" : "Copy invite URL"}
               </button>
             </div>
           ) : null}
