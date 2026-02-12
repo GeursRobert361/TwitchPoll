@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 
 import type {
@@ -99,6 +99,7 @@ export function DashboardClient({
   const [actionBusyId, setActionBusyId] = useState<string>("");
   const [voteDebug, setVoteDebug] = useState<VoteDebug | null>(null);
   const [copiedKey, setCopiedKey] = useState<string>("");
+  const [overlayUrlNeedsRecopy, setOverlayUrlNeedsRecopy] = useState(false);
 
   const [newTitle, setNewTitle] = useState("");
   const [newVoteMode, setNewVoteMode] = useState<PollSummary["voteMode"]>("NUMBERS");
@@ -121,6 +122,7 @@ export function DashboardClient({
   const [overlayShowModeHint, setOverlayShowModeHint] = useState(true);
   const [overlayNoPollText, setOverlayNoPollText] = useState("No active poll.");
   const [overlayBgTransparency, setOverlayBgTransparency] = useState(26);
+  const hasInitializedOverlaySettings = useRef(false);
 
   const isOwner = role === "OWNER";
 
@@ -207,6 +209,25 @@ export function DashboardClient({
       window.clearTimeout(timer);
     };
   }, [copiedKey]);
+
+  useEffect(() => {
+    if (!hasInitializedOverlaySettings.current) {
+      hasInitializedOverlaySettings.current = true;
+      return;
+    }
+
+    setOverlayUrlNeedsRecopy(true);
+  }, [
+    overlayTheme,
+    overlayHideVotes,
+    overlayAnimate,
+    overlayShowTimer,
+    overlayShowLastVoters,
+    overlayShowNoPoll,
+    overlayShowModeHint,
+    overlayNoPollText,
+    overlayBgTransparency
+  ]);
 
   const livePoll = useMemo(() => polls.find((poll) => poll.state === "LIVE") ?? null, [polls]);
 
@@ -476,6 +497,9 @@ export function DashboardClient({
       if (key) {
         setCopiedKey(key);
       }
+      if (key === "configured-overlay-url") {
+        setOverlayUrlNeedsRecopy(false);
+      }
     } catch {
       // noop
     }
@@ -631,6 +655,11 @@ export function DashboardClient({
             </span>
           </span>
         </div>
+        {overlayUrlNeedsRecopy ? (
+          <div style={{ marginTop: "0.45rem", color: "var(--danger)", fontWeight: 600, fontSize: "0.86rem" }}>
+            Overlay style/behavior changed. Copy URL again and update OBS.
+          </div>
+        ) : null}
 
         {voteDebug ? (
           <div className="muted" style={{ marginTop: "0.75rem" }}>
