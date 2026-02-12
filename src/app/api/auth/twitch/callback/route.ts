@@ -29,7 +29,8 @@ const createWorkspaceWithUniqueSlug = async (
           channelLogin: login,
           channelDisplayName: displayName,
           channelTwitchUserId: twitchUserId,
-          overlaySlug: generateOverlaySlug()
+          overlaySlug: generateOverlaySlug(),
+          channelConfirmedAt: new Date()
         }
       });
     } catch {
@@ -60,6 +61,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const token = await exchangeCodeForToken(code);
     const twitchUser = await fetchTwitchUser(token.access_token);
+    const twitchLogin = twitchUser.login.toLowerCase();
 
     const user = await prisma.user.upsert({
       where: { twitchUserId: twitchUser.id },
@@ -84,10 +86,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!workspace) {
       workspace = await createWorkspaceWithUniqueSlug(
         user.id,
-        twitchUser.login,
+        twitchLogin,
         twitchUser.display_name,
         twitchUser.id
       );
+    } else {
+      workspace = await prisma.channelWorkspace.update({
+        where: { id: workspace.id },
+        data: {
+          channelLogin: twitchLogin,
+          channelDisplayName: twitchUser.display_name,
+          channelTwitchUserId: twitchUser.id,
+          channelConfirmedAt: workspace.channelConfirmedAt ?? new Date()
+        }
+      });
     }
 
     const claims: SessionClaims = {
@@ -98,9 +110,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     };
 
     const sessionToken = await createSessionToken(claims);
-    const redirectTarget = workspace.channelConfirmedAt ? "/dashboard" : "/onboarding";
-
-    const response = NextResponse.redirect(`${env.baseUrl}${redirectTarget}`);
+    const response = NextResponse.redirect(`${env.baseUrl}/dashboard`);
     clearOauthStateCookie(response);
     attachSessionCookie(response, sessionToken);
 

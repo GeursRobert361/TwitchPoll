@@ -3,7 +3,9 @@ import { PollState, VoteMode } from "@prisma/client";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { announcePollEnded } from "@/server/pollAnnouncements";
 import { broadcastPollState, broadcastPollUpdate } from "@/server/realtime";
+import { twitchBotClient } from "@/server/twitchBotClient";
 import { twitchIrcClient } from "@/server/twitchIrcClient";
 import { ingestVote, submitDemoVote } from "@/server/voteService";
 
@@ -26,7 +28,12 @@ const endExpiredPolls = async (): Promise<void> => {
       }
     },
     select: {
-      id: true
+      id: true,
+      workspace: {
+        select: {
+          channelLogin: true
+        }
+      }
     }
   });
 
@@ -41,6 +48,7 @@ const endExpiredPolls = async (): Promise<void> => {
 
     await broadcastPollState(poll.id);
     await broadcastPollUpdate(poll.id);
+    await announcePollEnded(poll.id, poll.workspace.channelLogin);
   }
 };
 
@@ -215,5 +223,6 @@ export const stopRuntime = (): void => {
   unsubIrc = null;
 
   twitchIrcClient.stop();
+  twitchBotClient.stop();
 };
 

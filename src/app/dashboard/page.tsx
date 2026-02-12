@@ -14,10 +14,6 @@ export default async function DashboardPage(): Promise<React.ReactElement> {
     redirect("/");
   }
 
-  if (!context.workspace.channelConfirmedAt) {
-    redirect("/onboarding");
-  }
-
   const polls = await listWorkspacePolls(context.workspace.id);
 
   const [moderators, invites] = await Promise.all([

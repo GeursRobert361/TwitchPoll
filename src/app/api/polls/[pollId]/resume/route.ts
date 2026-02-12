@@ -5,6 +5,7 @@ import { handleApiError } from "@/lib/http";
 import { listWorkspacePolls } from "@/lib/pollMapper";
 import { prisma } from "@/lib/prisma";
 import { requireWorkspaceSession } from "@/lib/session";
+import { announcePollEnded, announcePollStarted } from "@/server/pollAnnouncements";
 import { broadcastPollState, broadcastPollUpdate } from "@/server/realtime";
 import { twitchIrcClient } from "@/server/twitchIrcClient";
 
@@ -31,10 +32,6 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
 
     if (!poll) {
       return NextResponse.json({ error: "Poll not found" }, { status: 404 });
-    }
-
-    if (!context.workspace.channelConfirmedAt) {
-      return NextResponse.json({ error: "Confirm channel first" }, { status: 400 });
     }
 
     if (poll.state !== PollState.ENDED) {
@@ -109,6 +106,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
     for (const endedPoll of previouslyLive) {
       await broadcastPollState(endedPoll.id);
       await broadcastPollUpdate(endedPoll.id);
+      await announcePollEnded(endedPoll.id, context.workspace.channelLogin);
     }
 
     const previouslyLiveIds = new Set(previouslyLive.map((entry) => entry.id));
@@ -120,6 +118,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
 
     await broadcastPollState(poll.id);
     await broadcastPollUpdate(poll.id);
+    await announcePollStarted(poll.id, context.workspace.channelLogin);
 
     const polls = await listWorkspacePolls(context.workspace.id);
     const resumed = polls.find((entry) => entry.id === poll.id) ?? null;

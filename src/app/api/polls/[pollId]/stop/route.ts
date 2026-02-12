@@ -5,6 +5,7 @@ import { handleApiError } from "@/lib/http";
 import { listWorkspacePolls } from "@/lib/pollMapper";
 import { prisma } from "@/lib/prisma";
 import { requireWorkspaceSession } from "@/lib/session";
+import { announcePollEnded } from "@/server/pollAnnouncements";
 import { broadcastPollState, broadcastPollUpdate } from "@/server/realtime";
 
 export const runtime = "nodejs";
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
 
     await broadcastPollState(poll.id);
     await broadcastPollUpdate(poll.id);
+    await announcePollEnded(poll.id, context.workspace.channelLogin);
 
     const polls = await listWorkspacePolls(context.workspace.id);
     const stopped = polls.find((entry) => entry.id === poll.id) ?? null;

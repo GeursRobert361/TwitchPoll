@@ -15,9 +15,10 @@ Realtime Twitch poll webapp (zoals poll.ma.pe) met owner dashboard, OBS overlay 
 ## Features
 
 - Twitch OAuth Authorization Code flow voor streamer login
-- Workspace/channel bevestiging na login
+- Workspace channel wordt automatisch gekoppeld aan ingelogde Twitch account
 - Poll lifecycle: `DRAFT -> LIVE -> ENDED`
 - Vote parsing uit Twitch chat (`1`, `A`, `!vote 2`, `!vote keyword`)
+- Optionele bot chat announcements bij poll start/einde
 - Duplicate policy: `FIRST` of `LATEST`
 - Anti-spam throttle: max 1 vote-update per user per seconde
 - Optionele bot/blacklist filtering
@@ -61,6 +62,9 @@ Kopieer `.env.example` naar `.env`.
 ```env
 TWITCH_CLIENT_ID=
 TWITCH_CLIENT_SECRET=
+TWITCH_BOT_ENABLED=false
+TWITCH_BOT_USERNAME=
+TWITCH_BOT_OAUTH_TOKEN=
 BASE_URL=http://localhost:3000
 SESSION_SECRET=please_change_this_secret
 DATABASE_URL=file:./dev.db
@@ -105,6 +109,12 @@ In Twitch Developer Console:
 - Scopes: minimaal (de app gebruikt geen extra scopes)
 
 Zet `DEMO_MODE=false` en configureer `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET`.
+
+Voor chat announcements met een Twitch bot:
+
+- Zet `TWITCH_BOT_ENABLED=true`
+- Zet `TWITCH_BOT_USERNAME` naar je bot login (lowercase)
+- Zet `TWITCH_BOT_OAUTH_TOKEN` naar bot OAuth token (`oauth:...` of zonder prefix)
 
 ## OBS overlay
 
