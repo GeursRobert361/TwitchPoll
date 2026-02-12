@@ -510,7 +510,7 @@ export function DashboardClient({
       <section className="card">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: "1.5rem" }}>{isOwner ? "Owner Dashboard" : "Mod Dashboard"}</h1>
+            <h1 style={{ margin: 0, fontSize: "1.5rem" }}>{isOwner ? "Streamer Dashboard" : "Mod Dashboard"}</h1>
             <p className="muted" style={{ marginBottom: 0 }}>
               Channel: <span className="mono">#{workspaceState.channelLogin}</span>
             </p>
