@@ -770,7 +770,7 @@ export function DashboardClient({
               type="button"
               className="secondary"
               onClick={() => {
-                if (newOptions.length >= 6) {
+                if (newOptions.length >= 8) {
                   return;
                 }
 
@@ -782,7 +782,7 @@ export function DashboardClient({
                   }
                 ]);
               }}
-              disabled={newOptions.length >= 6}
+              disabled={newOptions.length >= 8}
             >
               Add option
             </button>

@@ -40,7 +40,7 @@ const buildVoteHint = (
   const tokens = options
     .map((option) => toVoteToken(voteMode, option.position, option.keyword))
     .filter(Boolean)
-    .slice(0, 6);
+    .slice(0, 8);
 
   if (tokens.length === 0) {
     return "Vote in chat now.";

@@ -39,7 +39,7 @@ const createPollSchema = z.object({
       label: z.string().trim().min(1).max(80),
       keyword: z.string().trim().min(1).max(30).optional()
     })
-  ).min(2).max(6)
+  ).min(2).max(8)
 });
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
