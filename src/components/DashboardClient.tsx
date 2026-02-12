@@ -1,0 +1,1012 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { io, type Socket } from "socket.io-client";
+
+import type {
+  InviteSummary,
+  ModeratorSummary,
+  PollOptionSummary,
+  PollSummary,
+  WorkspaceSummary
+} from "@/types/dashboard";
+
+type DashboardClientProps = {
+  role: "OWNER" | "MOD";
+  workspace: WorkspaceSummary;
+  initialPolls: PollSummary[];
+  initialModerators?: ModeratorSummary[];
+  initialInvites?: InviteSummary[];
+};
+
+type OverlayTheme = "dark" | "light";
+
+type VoteDebug = {
+  pollId: string;
+  voterUserName: string;
+  optionPosition: number;
+  source: string;
+  receivedAt: string;
+};
+
+const defaultKeywordForMode = (voteMode: PollSummary["voteMode"], index: number): string => {
+  if (voteMode === "NUMBERS") {
+    return String(index + 1);
+  }
+
+  if (voteMode === "LETTERS") {
+    return String.fromCharCode(97 + index);
+  }
+
+  return `option_${index + 1}`;
+};
+
+const defaultOptionInputs = (
+  count: number,
+  voteMode: PollSummary["voteMode"] = "NUMBERS"
+): Array<{ label: string; keyword: string }> =>
+  Array.from({ length: count }, (_, index) => ({
+    label: `Option ${index + 1}`,
+    keyword: defaultKeywordForMode(voteMode, index)
+  }));
+
+const toLocalDateTime = (value: string | null): string => {
+  if (!value) {
+    return "-";
+  }
+
+  return new Date(value).toLocaleString();
+};
+
+const statePillClass = (state: PollSummary["state"]): string => {
+  if (state === "LIVE") {
+    return "pill live";
+  }
+
+  if (state === "ENDED") {
+    return "pill ended";
+  }
+
+  return "pill draft";
+};
+
+const topOptionLabel = (poll: PollSummary): string => {
+  if (!poll.topOptionId) {
+    return "None";
+  }
+
+  return poll.options.find((option) => option.id === poll.topOptionId)?.label ?? "None";
+};
+
+const sortOptions = (options: PollOptionSummary[]): PollOptionSummary[] =>
+  [...options].sort((a, b) => a.position - b.position);
+
+const clampPercentage = (value: number): number => Math.min(100, Math.max(0, Math.round(value)));
+
+export function DashboardClient({
+  role,
+  workspace,
+  initialPolls,
+  initialModerators = [],
+  initialInvites = []
+}: DashboardClientProps): React.ReactElement {
+  const [polls, setPolls] = useState<PollSummary[]>(initialPolls);
+  const [workspaceState, setWorkspaceState] = useState<WorkspaceSummary>(workspace);
+  const [moderators, setModerators] = useState<ModeratorSummary[]>(initialModerators);
+  const [invites, setInvites] = useState<InviteSummary[]>(initialInvites);
+  const [latestInviteUrl, setLatestInviteUrl] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [actionBusyId, setActionBusyId] = useState<string>("");
+  const [voteDebug, setVoteDebug] = useState<VoteDebug | null>(null);
+
+  const [newTitle, setNewTitle] = useState("");
+  const [newVoteMode, setNewVoteMode] = useState<PollSummary["voteMode"]>("NUMBERS");
+  const [newDuration, setNewDuration] = useState<string>("120");
+  const [newDuplicatePolicy, setNewDuplicatePolicy] = useState<PollSummary["duplicateVotePolicy"]>("LATEST");
+  const [allowVoteChange, setAllowVoteChange] = useState(true);
+  const [newOptions, setNewOptions] = useState<Array<{ label: string; keyword: string }>>(
+    defaultOptionInputs(2, "NUMBERS")
+  );
+
+  const [channelLogin, setChannelLogin] = useState(workspace.channelLogin);
+  const [channelDisplayName, setChannelDisplayName] = useState(workspace.channelDisplayName);
+  const [botFilterEnabled, setBotFilterEnabled] = useState(workspace.botFilterEnabled);
+  const [blacklistUsers, setBlacklistUsers] = useState(workspace.blacklistUsers.join(","));
+  const [inviteExpiryDays, setInviteExpiryDays] = useState("7");
+  const [overlayTheme, setOverlayTheme] = useState<OverlayTheme>("dark");
+  const [overlayHideVotes, setOverlayHideVotes] = useState(false);
+  const [overlayAnimate, setOverlayAnimate] = useState(true);
+  const [overlayShowTimer, setOverlayShowTimer] = useState(true);
+  const [overlayShowLastVoters, setOverlayShowLastVoters] = useState(true);
+  const [overlayShowNoPoll, setOverlayShowNoPoll] = useState(true);
+  const [overlayShowModeHint, setOverlayShowModeHint] = useState(true);
+  const [overlayNoPollText, setOverlayNoPollText] = useState("No active poll.");
+  const [overlayBgTransparency, setOverlayBgTransparency] = useState(26);
+
+  const isOwner = role === "OWNER";
+
+  const fetchPolls = useCallback(async (): Promise<void> => {
+    const response = await fetch("/api/polls");
+    const payload = (await response.json()) as { polls: PollSummary[]; error?: string };
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Could not load polls");
+    }
+
+    setPolls(payload.polls);
+  }, []);
+
+  const fetchOwnerData = useCallback(async (): Promise<void> => {
+    if (!isOwner) {
+      return;
+    }
+
+    const response = await fetch("/api/mod-invites");
+    const payload = (await response.json()) as {
+      moderators?: ModeratorSummary[];
+      invites?: InviteSummary[];
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Could not load moderators/invites");
+    }
+
+    setModerators(payload.moderators ?? []);
+    setInvites(payload.invites ?? []);
+  }, [isOwner]);
+
+  useEffect(() => {
+    let active = true;
+
+    const socket: Socket = io({ transports: ["websocket"] });
+
+    socket.on("connect", () => {
+      socket.emit("workspace:join", workspace.id);
+    });
+
+    socket.on("poll:update", () => {
+      if (!active) {
+        return;
+      }
+
+      fetchPolls().catch(() => undefined);
+    });
+
+    socket.on("poll:state", () => {
+      if (!active) {
+        return;
+      }
+
+      fetchPolls().catch(() => undefined);
+    });
+
+    socket.on("vote:received", (payload: VoteDebug) => {
+      if (!active) {
+        return;
+      }
+
+      setVoteDebug(payload);
+    });
+
+    return () => {
+      active = false;
+      socket.close();
+    };
+  }, [fetchPolls, workspace.id]);
+
+  const livePoll = useMemo(() => polls.find((poll) => poll.state === "LIVE") ?? null, [polls]);
+
+  const totalVotesAllPolls = useMemo(
+    () => polls.reduce((sum, poll) => sum + poll.totalVotes, 0),
+    [polls]
+  );
+
+  const overlayUrlWithOptions = useMemo(() => {
+    const url = new URL(workspaceState.overlayUrl);
+    const safeTransparency = clampPercentage(overlayBgTransparency);
+    url.searchParams.set("theme", overlayTheme);
+    url.searchParams.set("hideVotes", String(overlayHideVotes));
+    url.searchParams.set("animate", String(overlayAnimate));
+    url.searchParams.set("showTimer", String(overlayShowTimer));
+    url.searchParams.set("showLastVoters", String(overlayShowLastVoters));
+    url.searchParams.set("showNoPoll", String(overlayShowNoPoll));
+    url.searchParams.set("showModeHint", String(overlayShowModeHint));
+    url.searchParams.set("noPollText", overlayNoPollText.trim() || "No active poll.");
+    url.searchParams.set("bgTransparency", String(safeTransparency));
+    return url.toString();
+  }, [
+    workspaceState.overlayUrl,
+    overlayTheme,
+    overlayHideVotes,
+    overlayAnimate,
+    overlayShowTimer,
+    overlayShowLastVoters,
+    overlayShowNoPoll,
+    overlayShowModeHint,
+    overlayNoPollText,
+    overlayBgTransparency
+  ]);
+
+  const safeOverlayBgTransparency = clampPercentage(overlayBgTransparency);
+
+  const resetCreateForm = (): void => {
+    setNewTitle("");
+    setNewVoteMode("NUMBERS");
+    setNewDuration("120");
+    setNewDuplicatePolicy("LATEST");
+    setAllowVoteChange(true);
+    setNewOptions(defaultOptionInputs(2, "NUMBERS"));
+  };
+
+  const createPoll = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+
+    setLoading(true);
+
+    try {
+      const duration = Number(newDuration);
+
+      const response = await fetch("/api/polls", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          title: newTitle,
+          voteMode: newVoteMode,
+          durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : null,
+          duplicateVotePolicy: newDuplicatePolicy,
+          allowVoteChange,
+          options: newOptions
+        })
+      });
+
+      const payload = (await response.json()) as { polls?: PollSummary[]; error?: string };
+      if (!response.ok) {
+        alert(payload.error ?? "Failed to create poll");
+        return;
+      }
+
+      setPolls(payload.polls ?? []);
+      resetCreateForm();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runPollAction = async (
+    pollId: string,
+    action: "start" | "resume" | "stop" | "reset" | "publish",
+    body?: Record<string, unknown>
+  ): Promise<void> => {
+    setActionBusyId(`${pollId}:${action}`);
+
+    try {
+      const response = await fetch(`/api/polls/${pollId}/${action}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: body ? JSON.stringify(body) : undefined
+      });
+
+      const payload = (await response.json()) as { polls?: PollSummary[]; error?: string };
+
+      if (!response.ok) {
+        alert(payload.error ?? `Failed action: ${action}`);
+        return;
+      }
+
+      if (payload.polls) {
+        setPolls(payload.polls);
+      } else {
+        await fetchPolls();
+      }
+    } finally {
+      setActionBusyId("");
+    }
+  };
+
+  const deletePoll = async (pollId: string): Promise<void> => {
+    const shouldDelete = window.confirm("Delete this poll permanently?");
+    if (!shouldDelete) {
+      return;
+    }
+
+    setActionBusyId(`${pollId}:delete`);
+
+    try {
+      const response = await fetch(`/api/polls/${pollId}`, {
+        method: "DELETE"
+      });
+
+      const payload = (await response.json()) as { polls?: PollSummary[]; error?: string };
+      if (!response.ok) {
+        alert(payload.error ?? "Failed to delete poll");
+        return;
+      }
+
+      setPolls(payload.polls ?? []);
+    } finally {
+      setActionBusyId("");
+    }
+  };
+
+  const saveWorkspaceSettings = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
+
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/workspace", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          channelLogin,
+          channelDisplayName,
+          botFilterEnabled,
+          blacklistUsers: blacklistUsers
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean)
+        })
+      });
+
+      const payload = (await response.json()) as { workspace?: WorkspaceSummary; error?: string };
+      if (!response.ok) {
+        alert(payload.error ?? "Failed to save workspace settings");
+        return;
+      }
+
+      if (payload.workspace) {
+        setWorkspaceState(payload.workspace);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createInvite = async (): Promise<void> => {
+    const expiresInDays = Math.max(1, Number(inviteExpiryDays) || 7);
+
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/mod-invites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ expiresInDays })
+      });
+
+      const payload = (await response.json()) as {
+        invite?: { url: string };
+        error?: string;
+      };
+
+      if (!response.ok) {
+        alert(payload.error ?? "Failed to create invite");
+        return;
+      }
+
+      if (payload.invite?.url) {
+        setLatestInviteUrl(payload.invite.url);
+        await fetchOwnerData();
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const revokeInvite = async (inviteId: string): Promise<void> => {
+    setActionBusyId(inviteId);
+
+    try {
+      const response = await fetch(`/api/mod-invites/${inviteId}/revoke`, {
+        method: "POST"
+      });
+
+      if (!response.ok) {
+        alert("Failed to revoke invite");
+        return;
+      }
+
+      await fetchOwnerData();
+    } finally {
+      setActionBusyId("");
+    }
+  };
+
+  const revokeModerator = async (modId: string): Promise<void> => {
+    setActionBusyId(modId);
+
+    try {
+      const response = await fetch(`/api/mods/${modId}/revoke`, {
+        method: "POST"
+      });
+
+      if (!response.ok) {
+        alert("Failed to revoke moderator");
+        return;
+      }
+
+      await fetchOwnerData();
+    } finally {
+      setActionBusyId("");
+    }
+  };
+
+  const copyToClipboard = async (value: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // noop
+    }
+  };
+
+  return (
+    <div className="grid" style={{ gap: "1rem" }}>
+      <section className="card">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: "1.5rem" }}>{isOwner ? "Owner Dashboard" : "Mod Dashboard"}</h1>
+            <p className="muted" style={{ marginBottom: 0 }}>
+              Channel: <span className="mono">#{workspaceState.channelLogin}</span>
+            </p>
+          </div>
+          <span className="pill">{role}</span>
+        </div>
+
+        <div className="grid three" style={{ marginTop: "0.9rem" }}>
+          <div className="card light">
+            <div className="muted">Current poll</div>
+            <div>{livePoll ? livePoll.title : "No live poll"}</div>
+          </div>
+          <div className="card light">
+            <div className="muted">Total votes</div>
+            <div>{totalVotesAllPolls}</div>
+          </div>
+          <div className="card light">
+            <div className="muted">Top option (live)</div>
+            <div>{livePoll ? topOptionLabel(livePoll) : "-"}</div>
+          </div>
+        </div>
+
+        <div className="row" style={{ marginTop: "0.8rem" }}>
+          <span className="mono">{workspaceState.overlayUrl}</span>
+          <button type="button" className="secondary" onClick={() => copyToClipboard(workspaceState.overlayUrl)}>
+            Copy base URL
+          </button>
+          <a href={workspaceState.overlayUrl} target="_blank" rel="noreferrer">
+            <button type="button" className="secondary">
+              Open base overlay
+            </button>
+          </a>
+        </div>
+
+        <details style={{ marginTop: "0.9rem" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 600 }}>Overlay behavior</summary>
+
+          <div className="grid two" style={{ marginTop: "0.7rem" }}>
+            <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+              <input
+                type="checkbox"
+                checked={overlayShowTimer}
+                onChange={(event) => setOverlayShowTimer(event.target.checked)}
+                style={{ width: "auto" }}
+              />
+              Show timer
+            </label>
+
+            <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+              <input
+                type="checkbox"
+                checked={overlayShowLastVoters}
+                onChange={(event) => setOverlayShowLastVoters(event.target.checked)}
+                style={{ width: "auto" }}
+              />
+              Show last voters
+            </label>
+
+            <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+              <input
+                type="checkbox"
+                checked={overlayShowNoPoll}
+                onChange={(event) => setOverlayShowNoPoll(event.target.checked)}
+                style={{ width: "auto" }}
+              />
+              Show no-poll screen
+            </label>
+
+            <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+              <input
+                type="checkbox"
+                checked={overlayShowModeHint}
+                onChange={(event) => setOverlayShowModeHint(event.target.checked)}
+                style={{ width: "auto" }}
+              />
+              Show vote hint text
+            </label>
+          </div>
+
+          <label style={{ marginTop: "0.7rem" }}>
+            No poll text
+            <input
+              value={overlayNoPollText}
+              onChange={(event) => setOverlayNoPollText(event.target.value)}
+              disabled={!overlayShowNoPoll}
+            />
+          </label>
+        </details>
+
+        <details style={{ marginTop: "0.7rem" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 600 }}>Overlay style</summary>
+
+          <div className="grid two" style={{ marginTop: "0.7rem" }}>
+            <label>
+              Theme
+              <select value={overlayTheme} onChange={(event) => setOverlayTheme(event.target.value as OverlayTheme)}>
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </label>
+
+            <label>
+              Background transparency: {safeOverlayBgTransparency}%
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={safeOverlayBgTransparency}
+                onChange={(event) => setOverlayBgTransparency(clampPercentage(Number(event.target.value)))}
+              />
+            </label>
+
+            <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+              <input
+                type="checkbox"
+                checked={overlayHideVotes}
+                onChange={(event) => setOverlayHideVotes(event.target.checked)}
+                style={{ width: "auto" }}
+              />
+              Hide vote counts
+            </label>
+
+            <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+              <input
+                type="checkbox"
+                checked={overlayAnimate}
+                onChange={(event) => setOverlayAnimate(event.target.checked)}
+                style={{ width: "auto" }}
+              />
+              Animate bars
+            </label>
+          </div>
+        </details>
+
+        <div className="row" style={{ marginTop: "0.8rem" }}>
+          <span className="mono">{overlayUrlWithOptions}</span>
+          <button type="button" className="secondary" onClick={() => copyToClipboard(overlayUrlWithOptions)}>
+            Copy configured URL
+          </button>
+          <a href={overlayUrlWithOptions} target="_blank" rel="noreferrer">
+            <button type="button" className="secondary">
+              Open configured overlay
+            </button>
+          </a>
+        </div>
+
+        {voteDebug ? (
+          <div className="muted" style={{ marginTop: "0.75rem" }}>
+            Last vote: {voteDebug.voterUserName} to option {voteDebug.optionPosition} ({voteDebug.source})
+          </div>
+        ) : null}
+      </section>
+
+      <section className="card">
+        <h2 className="section-title">Create Poll</h2>
+        <form onSubmit={createPoll} className="grid" style={{ gap: "0.7rem" }}>
+          <label>
+            Question
+            <input
+              value={newTitle}
+              onChange={(event) => setNewTitle(event.target.value)}
+              required
+              placeholder="What should we play next?"
+            />
+          </label>
+
+          <div className="grid three">
+            <label>
+              Vote mode
+              <select
+                value={newVoteMode}
+                onChange={(event) => {
+                  const mode = event.target.value as PollSummary["voteMode"];
+                  setNewVoteMode(mode);
+                  setNewOptions((current) =>
+                    current.map((option, index) => ({
+                      ...option,
+                      keyword: defaultKeywordForMode(mode, index)
+                    }))
+                  );
+                }}
+              >
+                <option value="NUMBERS">Numbers (1, 2 or !vote 2)</option>
+                <option value="LETTERS">Letters (A, B or !vote B)</option>
+                <option value="KEYWORDS">Keywords (keyword or !vote keyword)</option>
+              </select>
+            </label>
+
+            <label>
+              Duration (sec, optional)
+              <input
+                value={newDuration}
+                onChange={(event) => setNewDuration(event.target.value)}
+                type="number"
+                min={0}
+              />
+            </label>
+
+            <label>
+              Duplicate vote policy
+              <select
+                value={newDuplicatePolicy}
+                onChange={(event) => setNewDuplicatePolicy(event.target.value as PollSummary["duplicateVotePolicy"])}
+              >
+                <option value="LATEST">Latest vote counts</option>
+                <option value="FIRST">First vote counts</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+            <input
+              type="checkbox"
+              checked={allowVoteChange}
+              onChange={(event) => setAllowVoteChange(event.target.checked)}
+              style={{ width: "auto" }}
+            />
+            Allow changing vote
+          </label>
+
+          <div className="grid" style={{ gap: "0.5rem" }}>
+            {newOptions.map((option, index) => (
+              <div className="grid two" key={`option-${index}`}>
+                <label>
+                  Option {index + 1}
+                  <input
+                    value={option.label}
+                    onChange={(event) => {
+                      const copy = [...newOptions];
+                      copy[index] = { ...copy[index], label: event.target.value };
+                      setNewOptions(copy);
+                    }}
+                    required
+                  />
+                </label>
+                <label>
+                  Keyword
+                  <input
+                    value={option.keyword}
+                    onChange={(event) => {
+                      const copy = [...newOptions];
+                      copy[index] = { ...copy[index], keyword: event.target.value };
+                      setNewOptions(copy);
+                    }}
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
+
+          <div className="row">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                if (newOptions.length >= 6) {
+                  return;
+                }
+
+                setNewOptions([
+                  ...newOptions,
+                  {
+                    label: `Option ${newOptions.length + 1}`,
+                    keyword: defaultKeywordForMode(newVoteMode, newOptions.length)
+                  }
+                ]);
+              }}
+              disabled={newOptions.length >= 6}
+            >
+              Add option
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                if (newOptions.length <= 2) {
+                  return;
+                }
+
+                setNewOptions(newOptions.slice(0, -1));
+              }}
+              disabled={newOptions.length <= 2}
+            >
+              Remove option
+            </button>
+            <button type="submit" disabled={loading || newTitle.trim().length < 3}>
+              {loading ? "Creating..." : "Create poll"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="grid" style={{ gap: "0.8rem" }}>
+        {polls.map((poll) => (
+          <article className="card" key={poll.id}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div>
+                <h3 style={{ marginTop: 0, marginBottom: "0.3rem" }}>{poll.title}</h3>
+                <div className="row">
+                  <span className={statePillClass(poll.state)}>{poll.state}</span>
+                  <span className="pill">{poll.voteMode}</span>
+                  <span className="pill">Votes: {poll.totalVotes}</span>
+                </div>
+              </div>
+
+              <div className="row">
+                {poll.state === "DRAFT" ? (
+                  <button
+                    type="button"
+                    onClick={() => runPollAction(poll.id, "start")}
+                    disabled={actionBusyId === `${poll.id}:start`}
+                  >
+                    Start
+                  </button>
+                ) : null}
+
+                {poll.state === "ENDED" ? (
+                  <button
+                    type="button"
+                    onClick={() => runPollAction(poll.id, "resume")}
+                    disabled={actionBusyId === `${poll.id}:resume`}
+                  >
+                    Resume
+                  </button>
+                ) : null}
+
+                {poll.state === "LIVE" ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => runPollAction(poll.id, "stop")}
+                    disabled={actionBusyId === `${poll.id}:stop`}
+                  >
+                    Stop
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => runPollAction(poll.id, "publish")}
+                  disabled={actionBusyId === `${poll.id}:publish`}
+                >
+                  {poll.resultsPublished ? "Unpublish" : "Publish"}
+                </button>
+
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => runPollAction(poll.id, "reset")}
+                  disabled={actionBusyId === `${poll.id}:reset`}
+                >
+                  Reset
+                </button>
+
+                {poll.state !== "LIVE" ? (
+                  <button
+                    type="button"
+                    className="danger"
+                    title="Delete poll"
+                    onClick={() => deletePoll(poll.id)}
+                    disabled={actionBusyId === `${poll.id}:delete`}
+                    style={{ padding: "0.15rem 0.5rem", minWidth: 28, lineHeight: 1.1 }}
+                  >
+                    x
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="grid two" style={{ marginTop: "0.5rem" }}>
+              <div>
+                {sortOptions(poll.options).map((option) => (
+                  <div className="poll-option" key={option.id}>
+                    <div className="meta">
+                      <span>
+                        {option.position}. {option.label}
+                      </span>
+                      <span>
+                        {option.votes} ({option.percent}%)
+                      </span>
+                    </div>
+                    <div className="progress">
+                      <span style={{ width: `${option.percent}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="card light">
+                <div className="kv">
+                  <span>Top option</span>
+                  <span>{topOptionLabel(poll)}</span>
+                </div>
+                <div className="kv">
+                  <span>Starts</span>
+                  <span>{toLocalDateTime(poll.startsAt)}</span>
+                </div>
+                <div className="kv">
+                  <span>Ends</span>
+                  <span>{toLocalDateTime(poll.endsAt)}</span>
+                </div>
+                <div className="kv">
+                  <span>Vote policy</span>
+                  <span>{poll.duplicateVotePolicy}</span>
+                </div>
+              </div>
+            </div>
+          </article>
+        ))}
+      </section>
+
+      {isOwner ? (
+        <section className="card">
+          <h2 className="section-title">Workspace Settings</h2>
+
+          <form onSubmit={saveWorkspaceSettings} className="grid" style={{ gap: "0.7rem" }}>
+            <div className="grid two">
+              <label>
+                Channel login
+                <input value={channelLogin} onChange={(event) => setChannelLogin(event.target.value)} />
+              </label>
+
+              <label>
+                Channel display name
+                <input
+                  value={channelDisplayName}
+                  onChange={(event) => setChannelDisplayName(event.target.value)}
+                />
+              </label>
+            </div>
+
+            <label className="row" style={{ alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={botFilterEnabled}
+                onChange={(event) => setBotFilterEnabled(event.target.checked)}
+                style={{ width: "auto" }}
+              />
+              Enable simple bot filter (`username` contains "bot")
+            </label>
+
+            <label>
+              Blacklist usernames (comma-separated)
+              <input
+                value={blacklistUsers}
+                onChange={(event) => setBlacklistUsers(event.target.value)}
+                placeholder="nightbot,streamelements"
+              />
+            </label>
+
+            <div className="row">
+              <button type="submit" disabled={loading}>
+                {loading ? "Saving..." : "Save workspace"}
+              </button>
+            </div>
+          </form>
+
+          <h3 className="section-title" style={{ marginTop: "1rem" }}>
+            Moderator Invites
+          </h3>
+
+          <div className="row">
+            <label style={{ width: 180 }}>
+              Expires in days
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={inviteExpiryDays}
+                onChange={(event) => setInviteExpiryDays(event.target.value)}
+              />
+            </label>
+            <button type="button" onClick={createInvite} disabled={loading}>
+              Create invite
+            </button>
+          </div>
+
+          {latestInviteUrl ? (
+            <div className="row" style={{ marginTop: "0.65rem" }}>
+              <span className="mono">{latestInviteUrl}</span>
+              <button type="button" className="secondary" onClick={() => copyToClipboard(latestInviteUrl)}>
+                Copy invite URL
+              </button>
+            </div>
+          ) : null}
+
+          <div className="grid two" style={{ marginTop: "0.8rem" }}>
+            <div>
+              <h4 style={{ marginTop: 0 }}>Moderators</h4>
+              {moderators.length === 0 ? <p className="muted">No moderators yet.</p> : null}
+              {moderators.map((mod) => (
+                <div className="card light" key={mod.id} style={{ marginBottom: "0.5rem" }}>
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <div>
+                      <div>{mod.displayName}</div>
+                      <div className="muted">Last seen: {toLocalDateTime(mod.lastSeenAt)}</div>
+                    </div>
+                    {!mod.revokedAt ? (
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => revokeModerator(mod.id)}
+                        disabled={actionBusyId === mod.id}
+                      >
+                        Revoke
+                      </button>
+                    ) : (
+                      <span className="pill ended">revoked</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <h4 style={{ marginTop: 0 }}>Invite history</h4>
+              {invites.length === 0 ? <p className="muted">No invites created yet.</p> : null}
+              {invites.map((invite) => {
+                const status = invite.revokedAt
+                  ? "revoked"
+                  : invite.usedAt
+                    ? "used"
+                    : new Date(invite.expiresAt).getTime() < Date.now()
+                      ? "expired"
+                      : "active";
+
+                return (
+                  <div className="card light" key={invite.id} style={{ marginBottom: "0.5rem" }}>
+                    <div className="muted">Created: {toLocalDateTime(invite.createdAt)}</div>
+                    <div className="muted">Expires: {toLocalDateTime(invite.expiresAt)}</div>
+                    <div className="row" style={{ justifyContent: "space-between", marginTop: "0.3rem" }}>
+                      <span className="pill">{status}</span>
+                      {status === "active" ? (
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => revokeInvite(invite.id)}
+                          disabled={actionBusyId === invite.id}
+                        >
+                          Revoke
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+

@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: twitch
+      POSTGRES_PASSWORD: twitch
+      POSTGRES_DB: twitch_poll
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      BASE_URL: http://localhost:3000
+      SESSION_SECRET: change_me
+      DATABASE_URL: postgresql://twitch:twitch@postgres:5432/twitch_poll?schema=public
+      DEMO_MODE: "true"
+      TWITCH_CLIENT_ID: ""
+      TWITCH_CLIENT_SECRET: ""
+
+volumes:
+  postgres_data:
+

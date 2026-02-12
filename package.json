@@ -1,0 +1,47 @@
+{
+  "name": "twitch-poll-overlay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run db:migrate && cross-env NODE_ENV=development tsx watch server.ts",
+    "build": "next build",
+    "start": "cross-env NODE_ENV=production tsx server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:generate:postgres": "prisma generate --schema prisma-postgres/schema.prisma",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:postgres": "prisma migrate deploy --schema prisma-postgres/schema.prisma",
+    "db:dev": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:push:postgres": "prisma db push --schema prisma-postgres/schema.prisma",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.3.1",
+    "express": "^4.21.2",
+    "jose": "^5.9.6",
+    "nanoid": "^5.1.5",
+    "next": "^14.2.24",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.5.13",
+    "cross-env": "^7.0.3",
+    "prisma": "^6.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
+

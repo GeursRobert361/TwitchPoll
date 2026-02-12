@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PollState {
+  DRAFT
+  LIVE
+  ENDED
+}
+
+enum VoteMode {
+  NUMBERS
+  LETTERS
+  KEYWORDS
+}
+
+enum DuplicateVotePolicy {
+  FIRST
+  LATEST
+}
+
+model User {
+  id           String             @id @default(cuid())
+  twitchUserId String             @unique
+  login        String
+  displayName  String
+  avatarUrl    String?
+  workspaces   ChannelWorkspace[] @relation("WorkspaceOwner")
+  invites      ModInvite[]        @relation("InviteCreator")
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+}
+
+model ChannelWorkspace {
+  id                 String      @id @default(cuid())
+  ownerId            String
+  owner              User        @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  channelLogin       String
+  channelDisplayName String
+  channelTwitchUserId String?
+  overlaySlug        String      @unique
+  channelConfirmedAt DateTime?
+  botFilterEnabled   Boolean     @default(false)
+  blacklistJson      String?
+  polls              Poll[]
+  moderators         Moderator[]
+  invites            ModInvite[]
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@unique([ownerId, channelLogin])
+}
+
+model Moderator {
+  id          String           @id @default(cuid())
+  workspaceId String
+  workspace   ChannelWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  displayName String
+  revokedAt   DateTime?
+  lastSeenAt  DateTime?
+  invites     ModInvite[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model ModInvite {
+  id         String           @id @default(cuid())
+  workspaceId String
+  workspace  ChannelWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy  User             @relation("InviteCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  tokenHash  String           @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  revokedAt  DateTime?
+  moderatorId String?
+  moderator  Moderator?       @relation(fields: [moderatorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime         @default(now())
+}
+
+model Poll {
+  id                  String              @id @default(cuid())
+  workspaceId         String
+  workspace           ChannelWorkspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  title               String
+  voteMode            VoteMode
+  state               PollState           @default(DRAFT)
+  duplicateVotePolicy DuplicateVotePolicy @default(LATEST)
+  allowVoteChange     Boolean             @default(true)
+  durationSeconds     Int?
+  startsAt            DateTime?
+  endsAt              DateTime?
+  resultsPublished    Boolean             @default(false)
+  createdByRole       String              @default("OWNER")
+  createdByLabel      String?
+  options             PollOption[]
+  votes               Vote[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([workspaceId, state])
+  @@index([endsAt])
+}
+
+model PollOption {
+  id        String   @id @default(cuid())
+  pollId    String
+  poll      Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  label     String
+  keyword   String
+  position  Int
+  votes     Vote[]
+  createdAt DateTime @default(now())
+
+  @@unique([pollId, position])
+  @@unique([pollId, keyword])
+}
+
+model Vote {
+  id           String     @id @default(cuid())
+  pollId       String
+  poll         Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  optionId     String
+  option       PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  voterUserName String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([pollId, voterUserName])
+  @@index([pollId])
+}
+
