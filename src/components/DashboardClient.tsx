@@ -29,6 +29,20 @@ type VoteDebug = {
   receivedAt: string;
 };
 
+type PollEditorOption = {
+  label: string;
+  keyword: string;
+};
+
+type PollEditorDraft = {
+  title: string;
+  voteMode: PollSummary["voteMode"];
+  durationSeconds: string;
+  duplicateVotePolicy: PollSummary["duplicateVotePolicy"];
+  allowVoteChange: boolean;
+  options: PollEditorOption[];
+};
+
 const defaultKeywordForMode = (voteMode: PollSummary["voteMode"], index: number): string => {
   if (voteMode === "NUMBERS") {
     return String(index + 1);
@@ -83,6 +97,31 @@ const sortOptions = (options: PollOptionSummary[]): PollOptionSummary[] =>
 
 const clampPercentage = (value: number): number => Math.min(100, Math.max(0, Math.round(value)));
 
+const getDurationSliderValue = (draft: string | undefined, fallback: number | null): number => {
+  const parsed = Number((draft ?? "").trim());
+  if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 3600) {
+    return Math.round(parsed);
+  }
+
+  if (fallback !== null) {
+    return fallback;
+  }
+
+  return 120;
+};
+
+const buildPollEditorDraft = (poll: PollSummary): PollEditorDraft => ({
+  title: poll.title,
+  voteMode: poll.voteMode,
+  durationSeconds: poll.durationSeconds !== null ? String(poll.durationSeconds) : "",
+  duplicateVotePolicy: poll.duplicateVotePolicy,
+  allowVoteChange: poll.allowVoteChange,
+  options: sortOptions(poll.options).map((option) => ({
+    label: option.label,
+    keyword: option.keyword
+  }))
+});
+
 export function DashboardClient({
   role,
   workspace,
@@ -102,6 +141,8 @@ export function DashboardClient({
   const [copiedKey, setCopiedKey] = useState<string>("");
   const [overlayUrlNeedsRecopy, setOverlayUrlNeedsRecopy] = useState(false);
   const [durationDraftByPoll, setDurationDraftByPoll] = useState<Record<string, string>>({});
+  const [editingPollId, setEditingPollId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState<PollEditorDraft | null>(null);
 
   const [newTitle, setNewTitle] = useState("");
   const [newVoteMode, setNewVoteMode] = useState<PollSummary["voteMode"]>("NUMBERS");
@@ -236,6 +277,18 @@ export function DashboardClient({
       return changed ? next : current;
     });
   }, [polls]);
+
+  useEffect(() => {
+    if (!editingPollId) {
+      return;
+    }
+
+    const activePoll = polls.find((poll) => poll.id === editingPollId);
+    if (!activePoll || activePoll.state !== "DRAFT") {
+      setEditingPollId(null);
+      setEditingDraft(null);
+    }
+  }, [polls, editingPollId]);
 
   useEffect(() => {
     if (!hasInitializedOverlaySettings.current) {
@@ -434,6 +487,94 @@ export function DashboardClient({
         ...current,
         [poll.id]: updatedDuration !== null ? String(updatedDuration) : ""
       }));
+    } finally {
+      setActionBusyId("");
+    }
+  };
+
+  const openPollEditor = (poll: PollSummary): void => {
+    if (poll.state !== "DRAFT") {
+      return;
+    }
+
+    setEditingPollId(poll.id);
+    setEditingDraft(buildPollEditorDraft(poll));
+  };
+
+  const cancelPollEditor = (): void => {
+    setEditingPollId(null);
+    setEditingDraft(null);
+  };
+
+  const savePollEdits = async (poll: PollSummary): Promise<void> => {
+    if (!editingDraft || editingPollId !== poll.id) {
+      return;
+    }
+
+    if (editingDraft.title.trim().length < 3) {
+      alert("Question must be at least 3 characters");
+      return;
+    }
+
+    if (editingDraft.options.length < 2 || editingDraft.options.length > 8) {
+      alert("Poll must have between 2 and 8 options");
+      return;
+    }
+
+    if (editingDraft.options.some((option) => option.label.trim().length === 0)) {
+      alert("Each option must have a label");
+      return;
+    }
+
+    const durationRaw = editingDraft.durationSeconds.trim();
+    let durationSeconds: number | null = null;
+    if (durationRaw.length > 0) {
+      const parsed = Number(durationRaw);
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 60 * 60) {
+        alert("Duration must be empty or a whole number between 1 and 3600");
+        return;
+      }
+      durationSeconds = parsed;
+    }
+
+    setActionBusyId(`${poll.id}:edit`);
+
+    try {
+      const response = await fetch(`/api/polls/${poll.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          title: editingDraft.title,
+          voteMode: editingDraft.voteMode,
+          durationSeconds,
+          duplicateVotePolicy: editingDraft.duplicateVotePolicy,
+          allowVoteChange: editingDraft.allowVoteChange,
+          options: editingDraft.options
+        })
+      });
+
+      const payload = (await response.json()) as { polls?: PollSummary[]; poll?: PollSummary | null; error?: string };
+      if (!response.ok) {
+        alert(payload.error ?? "Failed to edit poll");
+        return;
+      }
+
+      if (payload.polls) {
+        setPolls(payload.polls);
+      } else {
+        await fetchPolls();
+      }
+
+      const updatedDuration = payload.poll?.durationSeconds ?? durationSeconds;
+      setDurationDraftByPoll((current) => ({
+        ...current,
+        [poll.id]: updatedDuration !== null ? String(updatedDuration) : ""
+      }));
+
+      setEditingPollId(null);
+      setEditingDraft(null);
     } finally {
       setActionBusyId("");
     }
@@ -1012,13 +1153,23 @@ export function DashboardClient({
 
               <div className="row">
                 {poll.state === "DRAFT" ? (
-                  <button
-                    type="button"
-                    onClick={() => runPollAction(poll.id, "start")}
-                    disabled={actionBusyId === `${poll.id}:start`}
-                  >
-                    Start
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => openPollEditor(poll)}
+                      disabled={actionBusyId === `${poll.id}:edit`}
+                    >
+                      {editingPollId === poll.id ? "Editing" : "Edit"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => runPollAction(poll.id, "start")}
+                      disabled={actionBusyId === `${poll.id}:start`}
+                    >
+                      Start
+                    </button>
+                  </>
                 ) : null}
 
                 {poll.state === "ENDED" ? (
@@ -1075,6 +1226,221 @@ export function DashboardClient({
               </div>
             </div>
 
+            {editingPollId === poll.id && editingDraft ? (
+              <div className="card light" style={{ marginTop: "0.65rem" }}>
+                <div className="grid" style={{ gap: "0.6rem" }}>
+                  <label>
+                    Question
+                    <input
+                      value={editingDraft.title}
+                      onChange={(event) =>
+                        setEditingDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                title: event.target.value
+                              }
+                            : current
+                        )
+                      }
+                    />
+                  </label>
+
+                  <div className="grid three">
+                    <label>
+                      Vote mode
+                      <select
+                        value={editingDraft.voteMode}
+                        onChange={(event) => {
+                          const mode = event.target.value as PollSummary["voteMode"];
+                          setEditingDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  voteMode: mode,
+                                  options: current.options.map((option, index) => ({
+                                    ...option,
+                                    keyword: defaultKeywordForMode(mode, index)
+                                  }))
+                                }
+                              : current
+                          );
+                        }}
+                      >
+                        <option value="NUMBERS">Numbers (1, 2 or !vote 2)</option>
+                        <option value="LETTERS">Letters (A, B or !vote B)</option>
+                        <option value="KEYWORDS">Keywords (keyword or !vote keyword)</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Duration (sec, optional)
+                      <input
+                        type="number"
+                        min={1}
+                        max={3600}
+                        value={editingDraft.durationSeconds}
+                        onChange={(event) =>
+                          setEditingDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  durationSeconds: event.target.value
+                                }
+                              : current
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      Duplicate vote policy
+                      <select
+                        value={editingDraft.duplicateVotePolicy}
+                        onChange={(event) =>
+                          setEditingDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  duplicateVotePolicy: event.target.value as PollSummary["duplicateVotePolicy"]
+                                }
+                              : current
+                          )
+                        }
+                      >
+                        <option value="LATEST">Latest vote counts</option>
+                        <option value="FIRST">First vote counts</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={editingDraft.allowVoteChange}
+                      onChange={(event) =>
+                        setEditingDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                allowVoteChange: event.target.checked
+                              }
+                            : current
+                        )
+                      }
+                      style={{ width: "auto" }}
+                    />
+                    Allow changing vote
+                  </label>
+
+                  <div className="grid" style={{ gap: "0.5rem" }}>
+                    {editingDraft.options.map((option, index) => (
+                      <div className="grid two" key={`${poll.id}-edit-option-${index}`}>
+                        <label>
+                          Option {index + 1}
+                          <input
+                            value={option.label}
+                            onChange={(event) =>
+                              setEditingDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      options: current.options.map((entry, idx) =>
+                                        idx === index ? { ...entry, label: event.target.value } : entry
+                                      )
+                                    }
+                                  : current
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          Keyword
+                          <input
+                            value={option.keyword}
+                            onChange={(event) =>
+                              setEditingDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      options: current.options.map((entry, idx) =>
+                                        idx === index ? { ...entry, keyword: event.target.value } : entry
+                                      )
+                                    }
+                                  : current
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() =>
+                        setEditingDraft((current) => {
+                          if (!current || current.options.length >= 8) {
+                            return current;
+                          }
+
+                          return {
+                            ...current,
+                            options: [
+                              ...current.options,
+                              {
+                                label: `Option ${current.options.length + 1}`,
+                                keyword: defaultKeywordForMode(current.voteMode, current.options.length)
+                              }
+                            ]
+                          };
+                        })
+                      }
+                      disabled={editingDraft.options.length >= 8 || actionBusyId === `${poll.id}:edit`}
+                    >
+                      Add option
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() =>
+                        setEditingDraft((current) => {
+                          if (!current || current.options.length <= 2) {
+                            return current;
+                          }
+
+                          return {
+                            ...current,
+                            options: current.options.slice(0, -1)
+                          };
+                        })
+                      }
+                      disabled={editingDraft.options.length <= 2 || actionBusyId === `${poll.id}:edit`}
+                    >
+                      Remove option
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => savePollEdits(poll)}
+                      disabled={actionBusyId === `${poll.id}:edit`}
+                    >
+                      {actionBusyId === `${poll.id}:edit` ? "Saving..." : "Save edits"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={cancelPollEditor}
+                      disabled={actionBusyId === `${poll.id}:edit`}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid two" style={{ marginTop: "0.5rem" }}>
               <div>
                 {sortOptions(poll.options).map((option) => (
@@ -1094,31 +1460,42 @@ export function DashboardClient({
                 ))}
               </div>
 
-              <div className="card light">
-                <div className="kv">
-                  <span>Top option</span>
-                  <span>{topOptionLabel(poll)}</span>
+              <div className="grid" style={{ gap: "0.55rem" }}>
+                <div className="card light">
+                  <div className="kv">
+                    <span>Top option</span>
+                    <span>{topOptionLabel(poll)}</span>
+                  </div>
+                  <div className="kv">
+                    <span>Starts</span>
+                    <span>{toLocalDateTime(poll.startsAt)}</span>
+                  </div>
+                  <div className="kv">
+                    <span>Ends</span>
+                    <span>{toLocalDateTime(poll.endsAt)}</span>
+                  </div>
+                  <div className="kv">
+                    <span>Vote policy</span>
+                    <span>{poll.duplicateVotePolicy}</span>
+                  </div>
                 </div>
-                <div className="kv">
-                  <span>Starts</span>
-                  <span>{toLocalDateTime(poll.startsAt)}</span>
-                </div>
-                <div className="kv">
-                  <span>Ends</span>
-                  <span>{toLocalDateTime(poll.endsAt)}</span>
-                </div>
-                <div className="kv">
-                  <span>Vote policy</span>
-                  <span>{poll.duplicateVotePolicy}</span>
-                </div>
-                <div style={{ marginTop: "0.7rem" }}>
+
+                <div
+                  style={{
+                    padding: "0.65rem 0.75rem",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: "rgba(255,255,255,0.04)"
+                  }}
+                >
                   <label>
-                    Duration (sec)
+                    Duration: {getDurationSliderValue(durationDraftByPoll[poll.id], poll.durationSeconds)}s
                     <input
-                      type="number"
+                      type="range"
                       min={1}
                       max={3600}
-                      value={durationDraftByPoll[poll.id] ?? (poll.durationSeconds !== null ? String(poll.durationSeconds) : "")}
+                      step={5}
+                      value={getDurationSliderValue(durationDraftByPoll[poll.id], poll.durationSeconds)}
                       onChange={(event) =>
                         setDurationDraftByPoll((current) => ({
                           ...current,
@@ -1127,6 +1504,10 @@ export function DashboardClient({
                       }
                     />
                   </label>
+                  <div className="row" style={{ marginTop: "0.45rem", justifyContent: "space-between" }}>
+                    <span className="muted">1s</span>
+                    <span className="muted">3600s</span>
+                  </div>
                   <div className="row" style={{ marginTop: "0.45rem" }}>
                     <button
                       type="button"

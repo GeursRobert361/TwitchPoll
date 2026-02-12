@@ -1,4 +1,4 @@
-import { PollState } from "@prisma/client";
+import { DuplicateVotePolicy, PollState, VoteMode } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -10,8 +10,38 @@ import { requireWorkspaceSession } from "@/lib/session";
 export const runtime = "nodejs";
 
 type Params = { params: { pollId: string } };
+
+const normalizeKeyword = (value: string): string =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
+
+const defaultKeywordForMode = (voteMode: VoteMode, index: number): string => {
+  if (voteMode === VoteMode.NUMBERS) {
+    return String(index + 1);
+  }
+
+  if (voteMode === VoteMode.LETTERS) {
+    return String.fromCharCode(97 + index);
+  }
+
+  return `option_${index + 1}`;
+};
+
 const updateSchema = z.object({
-  durationSeconds: z.number().int().positive().max(60 * 60).nullable()
+  title: z.string().trim().min(3).max(200).optional(),
+  voteMode: z.nativeEnum(VoteMode).optional(),
+  durationSeconds: z.number().int().positive().max(60 * 60).nullable().optional(),
+  duplicateVotePolicy: z.nativeEnum(DuplicateVotePolicy).optional(),
+  allowVoteChange: z.boolean().optional(),
+  options: z.array(
+    z.object({
+      label: z.string().trim().min(1).max(80),
+      keyword: z.string().trim().min(1).max(30).optional()
+    })
+  ).min(2).max(8).optional()
 });
 
 export async function PATCH(request: NextRequest, { params }: Params): Promise<NextResponse> {
@@ -30,7 +60,8 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
       },
       select: {
         id: true,
-        state: true
+        state: true,
+        voteMode: true
       }
     });
 
@@ -38,18 +69,96 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
       return NextResponse.json({ error: "Poll not found" }, { status: 404 });
     }
 
-    if (poll.state === PollState.LIVE) {
+    const isFullEditRequest = parsed.data.title !== undefined
+      || parsed.data.voteMode !== undefined
+      || parsed.data.duplicateVotePolicy !== undefined
+      || parsed.data.allowVoteChange !== undefined
+      || parsed.data.options !== undefined;
+
+    if (!isFullEditRequest && parsed.data.durationSeconds === undefined) {
+      return NextResponse.json({ error: "No changes provided" }, { status: 400 });
+    }
+
+    if (isFullEditRequest && poll.state !== PollState.DRAFT) {
+      return NextResponse.json({ error: "Only draft polls can be edited" }, { status: 400 });
+    }
+
+    if (parsed.data.durationSeconds !== undefined && poll.state === PollState.LIVE) {
       return NextResponse.json({ error: "Stop live poll before changing duration" }, { status: 400 });
+    }
+
+    const updateData: {
+      title?: string;
+      voteMode?: VoteMode;
+      durationSeconds?: number | null;
+      duplicateVotePolicy?: DuplicateVotePolicy;
+      allowVoteChange?: boolean;
+      options?: {
+        deleteMany: Record<string, never>;
+        create: Array<{
+          label: string;
+          keyword: string;
+          position: number;
+        }>;
+      };
+      updatedAt: Date;
+    } = {
+      updatedAt: new Date()
+    };
+
+    if (parsed.data.title !== undefined) {
+      updateData.title = parsed.data.title;
+    }
+
+    if (parsed.data.voteMode !== undefined) {
+      updateData.voteMode = parsed.data.voteMode;
+    }
+
+    if (parsed.data.durationSeconds !== undefined) {
+      updateData.durationSeconds = parsed.data.durationSeconds;
+    }
+
+    if (parsed.data.duplicateVotePolicy !== undefined) {
+      updateData.duplicateVotePolicy = parsed.data.duplicateVotePolicy;
+    }
+
+    if (parsed.data.allowVoteChange !== undefined) {
+      updateData.allowVoteChange = parsed.data.allowVoteChange;
+    }
+
+    if (parsed.data.options !== undefined) {
+      const effectiveVoteMode = parsed.data.voteMode ?? poll.voteMode;
+      const normalizedOptions = parsed.data.options.map((option, index) => {
+        const fallback = defaultKeywordForMode(effectiveVoteMode, index);
+        const keywordInput = option.keyword?.trim();
+        const keyword = normalizeKeyword(keywordInput && keywordInput.length > 0 ? keywordInput : fallback) || fallback;
+
+        return {
+          label: option.label,
+          keyword,
+          position: index + 1
+        };
+      });
+
+      const duplicateKeywords = normalizedOptions
+        .map((option) => option.keyword)
+        .filter((keyword, index, all) => all.indexOf(keyword) !== index);
+
+      if (duplicateKeywords.length > 0) {
+        return NextResponse.json({ error: "Option keywords must be unique" }, { status: 400 });
+      }
+
+      updateData.options = {
+        deleteMany: {},
+        create: normalizedOptions
+      };
     }
 
     await prisma.poll.update({
       where: {
         id: poll.id
       },
-      data: {
-        durationSeconds: parsed.data.durationSeconds,
-        updatedAt: new Date()
-      }
+      data: updateData
     });
 
     const polls = await listWorkspacePolls(context.workspace.id);
