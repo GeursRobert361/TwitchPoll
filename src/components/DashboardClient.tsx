@@ -101,6 +101,7 @@ export function DashboardClient({
   const [voteDebug, setVoteDebug] = useState<VoteDebug | null>(null);
   const [copiedKey, setCopiedKey] = useState<string>("");
   const [overlayUrlNeedsRecopy, setOverlayUrlNeedsRecopy] = useState(false);
+  const [durationDraftByPoll, setDurationDraftByPoll] = useState<Record<string, string>>({});
 
   const [newTitle, setNewTitle] = useState("");
   const [newVoteMode, setNewVoteMode] = useState<PollSummary["voteMode"]>("NUMBERS");
@@ -211,6 +212,30 @@ export function DashboardClient({
       window.clearTimeout(timer);
     };
   }, [copiedKey]);
+
+  useEffect(() => {
+    setDurationDraftByPoll((current) => {
+      const next = { ...current };
+      const pollIds = new Set(polls.map((poll) => poll.id));
+      let changed = false;
+
+      Object.keys(next).forEach((pollId) => {
+        if (!pollIds.has(pollId)) {
+          delete next[pollId];
+          changed = true;
+        }
+      });
+
+      polls.forEach((poll) => {
+        if (next[poll.id] === undefined) {
+          next[poll.id] = poll.durationSeconds !== null ? String(poll.durationSeconds) : "";
+          changed = true;
+        }
+      });
+
+      return changed ? next : current;
+    });
+  }, [polls]);
 
   useEffect(() => {
     if (!hasInitializedOverlaySettings.current) {
@@ -364,6 +389,51 @@ export function DashboardClient({
       }
 
       setPolls(payload.polls ?? []);
+    } finally {
+      setActionBusyId("");
+    }
+  };
+
+  const savePollDuration = async (poll: PollSummary): Promise<void> => {
+    const raw = (durationDraftByPoll[poll.id] ?? "").trim();
+
+    if (raw.length > 0) {
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 60 * 60) {
+        alert("Duration must be empty or a whole number between 1 and 3600");
+        return;
+      }
+    }
+
+    setActionBusyId(`${poll.id}:duration`);
+
+    try {
+      const durationSeconds = raw.length === 0 ? null : Number(raw);
+      const response = await fetch(`/api/polls/${poll.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ durationSeconds })
+      });
+
+      const payload = (await response.json()) as { polls?: PollSummary[]; poll?: PollSummary | null; error?: string };
+      if (!response.ok) {
+        alert(payload.error ?? "Failed to update duration");
+        return;
+      }
+
+      if (payload.polls) {
+        setPolls(payload.polls);
+      } else {
+        await fetchPolls();
+      }
+
+      const updatedDuration = payload.poll?.durationSeconds ?? durationSeconds;
+      setDurationDraftByPoll((current) => ({
+        ...current,
+        [poll.id]: updatedDuration !== null ? String(updatedDuration) : ""
+      }));
     } finally {
       setActionBusyId("");
     }
@@ -1040,6 +1110,34 @@ export function DashboardClient({
                 <div className="kv">
                   <span>Vote policy</span>
                   <span>{poll.duplicateVotePolicy}</span>
+                </div>
+                <div style={{ marginTop: "0.7rem" }}>
+                  <label>
+                    Duration (sec)
+                    <input
+                      type="number"
+                      min={1}
+                      max={3600}
+                      value={durationDraftByPoll[poll.id] ?? (poll.durationSeconds !== null ? String(poll.durationSeconds) : "")}
+                      onChange={(event) =>
+                        setDurationDraftByPoll((current) => ({
+                          ...current,
+                          [poll.id]: event.target.value
+                        }))
+                      }
+                    />
+                  </label>
+                  <div className="row" style={{ marginTop: "0.45rem" }}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => savePollDuration(poll)}
+                      disabled={poll.state === "LIVE" || actionBusyId === `${poll.id}:duration`}
+                    >
+                      {actionBusyId === `${poll.id}:duration` ? "Saving..." : "Save duration"}
+                    </button>
+                    {poll.state === "LIVE" ? <span className="muted">Stop poll to edit duration</span> : null}
+                  </div>
                 </div>
               </div>
             </div>
