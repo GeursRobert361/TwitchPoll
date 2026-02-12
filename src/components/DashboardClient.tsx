@@ -96,6 +96,7 @@ export function DashboardClient({
   const [invites, setInvites] = useState<InviteSummary[]>(initialInvites);
   const [latestInviteUrl, setLatestInviteUrl] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [backupBusy, setBackupBusy] = useState<"" | "export" | "import">("");
   const [actionBusyId, setActionBusyId] = useState<string>("");
   const [voteDebug, setVoteDebug] = useState<VoteDebug | null>(null);
   const [copiedKey, setCopiedKey] = useState<string>("");
@@ -123,6 +124,7 @@ export function DashboardClient({
   const [overlayNoPollText, setOverlayNoPollText] = useState("No active poll.");
   const [overlayBgTransparency, setOverlayBgTransparency] = useState(26);
   const hasInitializedOverlaySettings = useRef(false);
+  const importBackupInputRef = useRef<HTMLInputElement | null>(null);
 
   const isOwner = role === "OWNER";
 
@@ -401,6 +403,91 @@ export function DashboardClient({
     }
   };
 
+  const downloadPollBackup = async (): Promise<void> => {
+    if (!isOwner) {
+      return;
+    }
+
+    setBackupBusy("export");
+
+    try {
+      const response = await fetch("/api/polls/export");
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        alert(payload.error ?? "Failed to export polls");
+        return;
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const fileNameMatch = disposition.match(/filename=\"?([^"]+)\"?/i);
+      const fileName = fileNameMatch?.[1] ?? `polls-backup-${new Date().toISOString().slice(0, 10)}.json`;
+
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
+  const triggerImportPollBackup = (): void => {
+    importBackupInputRef.current?.click();
+  };
+
+  const importPollBackup = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setBackupBusy("import");
+
+    try {
+      const content = await file.text();
+      const parsed = JSON.parse(content) as unknown;
+
+      const response = await fetch("/api/polls/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(parsed)
+      });
+
+      const payload = (await response.json()) as {
+        importedCount?: number;
+        polls?: PollSummary[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        alert(payload.error ?? "Failed to import polls");
+        return;
+      }
+
+      if (payload.polls) {
+        setPolls(payload.polls);
+      } else {
+        await fetchPolls();
+      }
+
+      alert(`Imported ${payload.importedCount ?? 0} poll(s).`);
+    } catch {
+      alert("Invalid backup file");
+    } finally {
+      setBackupBusy("");
+    }
+  };
+
   const createInvite = async (): Promise<void> => {
     const expiresInDays = Math.max(1, Number(inviteExpiryDays) || 7);
 
@@ -669,7 +756,40 @@ export function DashboardClient({
       </section>
 
       <section className="card">
-        <h2 className="section-title">Create Poll</h2>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>Create Poll</h2>
+          {isOwner ? (
+            <div className="row">
+              <button
+                type="button"
+                className="secondary"
+                onClick={downloadPollBackup}
+                disabled={backupBusy === "export" || backupBusy === "import"}
+              >
+                {backupBusy === "export" ? "Downloading..." : "Download polls"}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={triggerImportPollBackup}
+                disabled={backupBusy === "export" || backupBusy === "import"}
+              >
+                {backupBusy === "import" ? "Importing..." : "Import polls"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {isOwner ? (
+          <input
+            ref={importBackupInputRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={importPollBackup}
+            style={{ display: "none" }}
+          />
+        ) : null}
+
         <form onSubmit={createPoll} className="grid" style={{ gap: "0.7rem" }}>
           <label>
             Question

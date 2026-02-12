@@ -172,6 +172,8 @@ export function OverlayClient({
     return "keyword or !vote keyword";
   }, [poll]);
 
+  const isPollFinished = poll?.state === "ENDED" || remaining === 0;
+
   if (!poll) {
     if (!showNoPoll) {
       return (
@@ -267,17 +269,19 @@ export function OverlayClient({
             ) : null}
           </div>
 
-          {showTimer && remaining !== null ? (
+          {showTimer && (remaining !== null || isPollFinished) ? (
             <div
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "2rem",
+                fontSize: isPollFinished ? "1.35rem" : "2rem",
                 padding: "0.5rem 0.7rem",
                 borderRadius: 12,
-                background: "rgba(255, 255, 255, 0.12)"
+                background: isPollFinished ? "rgba(30, 211, 167, 0.24)" : "rgba(255, 255, 255, 0.12)",
+                color: isPollFinished ? "#1ed3a7" : undefined,
+                fontWeight: isPollFinished ? 700 : undefined
               }}
             >
-              {remaining}s
+              {isPollFinished ? "Poll Finished" : `${remaining}s`}
             </div>
           ) : null}
         </div>
