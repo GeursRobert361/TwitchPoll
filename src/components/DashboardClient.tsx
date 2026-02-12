@@ -117,8 +117,8 @@ export function DashboardClient({
   const [overlayHideVotes, setOverlayHideVotes] = useState(false);
   const [overlayAnimate, setOverlayAnimate] = useState(true);
   const [overlayShowTimer, setOverlayShowTimer] = useState(true);
-  const [overlayShowLastVoters, setOverlayShowLastVoters] = useState(true);
-  const [overlayShowNoPoll, setOverlayShowNoPoll] = useState(true);
+  const [overlayShowLastVoters, setOverlayShowLastVoters] = useState(false);
+  const [overlayShowNoPoll, setOverlayShowNoPoll] = useState(false);
   const [overlayShowModeHint, setOverlayShowModeHint] = useState(true);
   const [overlayNoPollText, setOverlayNoPollText] = useState("No active poll.");
   const [overlayBgTransparency, setOverlayBgTransparency] = useState(26);
@@ -505,11 +505,11 @@ export function DashboardClient({
             <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
               <input
                 type="checkbox"
-                checked={overlayShowLastVoters}
-                onChange={(event) => setOverlayShowLastVoters(event.target.checked)}
+                checked={overlayShowModeHint}
+                onChange={(event) => setOverlayShowModeHint(event.target.checked)}
                 style={{ width: "auto" }}
               />
-              Show last voters
+              Show vote hint text
             </label>
 
             <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
@@ -525,11 +525,11 @@ export function DashboardClient({
             <label className="row" style={{ alignItems: "center", gap: "0.4rem" }}>
               <input
                 type="checkbox"
-                checked={overlayShowModeHint}
-                onChange={(event) => setOverlayShowModeHint(event.target.checked)}
+                checked={overlayShowLastVoters}
+                onChange={(event) => setOverlayShowLastVoters(event.target.checked)}
                 style={{ width: "auto" }}
               />
-              Show vote hint text
+              Show last voters
             </label>
           </div>
 

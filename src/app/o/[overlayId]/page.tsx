@@ -42,8 +42,8 @@ export default async function OverlayPage({ params, searchParams }: Props): Prom
   const hideVotes = parseBoolean(searchParams?.hideVotes, false);
   const animate = parseBoolean(searchParams?.animate, true);
   const showTimer = parseBoolean(searchParams?.showTimer, true);
-  const showLastVoters = parseBoolean(searchParams?.showLastVoters, true);
-  const showNoPoll = parseBoolean(searchParams?.showNoPoll, true);
+  const showLastVoters = parseBoolean(searchParams?.showLastVoters, false);
+  const showNoPoll = parseBoolean(searchParams?.showNoPoll, false);
   const showModeHint = parseBoolean(searchParams?.showModeHint, true);
   const noPollText = searchParams?.noPollText?.trim() || "No active poll.";
   const bgTransparency = parsePercentage(searchParams?.bgTransparency, 26);
