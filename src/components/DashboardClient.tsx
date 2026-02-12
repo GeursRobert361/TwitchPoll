@@ -1227,7 +1227,7 @@ export function DashboardClient({
             </div>
 
             {editingPollId === poll.id && editingDraft ? (
-              <div className="card light" style={{ marginTop: "0.65rem" }}>
+              <div className="card" style={{ marginTop: "0.65rem" }}>
                 <div className="grid" style={{ gap: "0.6rem" }}>
                   <label>
                     Question
