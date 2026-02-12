@@ -451,6 +451,25 @@ export function DashboardClient({
     }
   };
 
+  const removeRevokedModerator = async (modId: string): Promise<void> => {
+    setActionBusyId(`${modId}:delete`);
+
+    try {
+      const response = await fetch(`/api/mods/${modId}`, {
+        method: "DELETE"
+      });
+
+      if (!response.ok) {
+        alert("Failed to remove moderator");
+        return;
+      }
+
+      await fetchOwnerData();
+    } finally {
+      setActionBusyId("");
+    }
+  };
+
   const copyToClipboard = async (value: string, key?: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(value);
@@ -948,7 +967,26 @@ export function DashboardClient({
               <h4 style={{ marginTop: 0 }}>Moderators</h4>
               {moderators.length === 0 ? <p className="muted">No moderators yet.</p> : null}
               {moderators.map((mod) => (
-                <div className="card light" key={mod.id} style={{ marginBottom: "0.5rem" }}>
+                <div className="card light" key={mod.id} style={{ marginBottom: "0.5rem", position: "relative" }}>
+                  {mod.revokedAt ? (
+                    <button
+                      type="button"
+                      className="danger"
+                      title="Remove from list"
+                      onClick={() => removeRevokedModerator(mod.id)}
+                      disabled={actionBusyId === `${mod.id}:delete`}
+                      style={{
+                        position: "absolute",
+                        top: 8,
+                        right: 8,
+                        padding: "0.1rem 0.4rem",
+                        minWidth: 24,
+                        lineHeight: 1.1
+                      }}
+                    >
+                      x
+                    </button>
+                  ) : null}
                   <div className="row" style={{ justifyContent: "space-between" }}>
                     <div>
                       <div>{mod.displayName}</div>
