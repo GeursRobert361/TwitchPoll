@@ -364,6 +364,7 @@ export function DashboardClient({
   ]);
 
   const safeOverlayBgTransparency = clampPercentage(overlayBgTransparency);
+  const createDurationSeconds = getDurationSliderValue(newDuration, 120);
 
   const resetCreateForm = (): void => {
     setNewTitle("");
@@ -385,9 +386,15 @@ export function DashboardClient({
 
       if (
         hasDuration
-        && (!Number.isInteger(duration) || duration <= 0 || duration > MAX_POLL_DURATION_SECONDS)
+        && (
+          !Number.isInteger(duration)
+          || duration < MIN_POLL_DURATION_SECONDS
+          || duration > MAX_POLL_DURATION_SECONDS
+        )
       ) {
-        alert(`Duration must be empty or a whole number between 1 and ${MAX_POLL_DURATION_SECONDS}`);
+        alert(
+          `Duration must be empty or a whole number between ${MIN_POLL_DURATION_SECONDS} and ${MAX_POLL_DURATION_SECONDS}`
+        );
         return;
       }
 
@@ -1065,14 +1072,19 @@ export function DashboardClient({
             </label>
 
             <label>
-              Duration (sec, optional)
+              Duration: {createDurationSeconds}s ({formatRoundedHalfMinutes(createDurationSeconds)} min)
               <input
-                value={newDuration}
-                onChange={(event) => setNewDuration(event.target.value)}
-                type="number"
-                min={0}
+                type="range"
+                min={MIN_POLL_DURATION_SECONDS}
                 max={MAX_POLL_DURATION_SECONDS}
+                step={POLL_DURATION_STEP_SECONDS}
+                value={createDurationSeconds}
+                onChange={(event) => setNewDuration(event.target.value)}
               />
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <span className="muted">{MIN_POLL_DURATION_SECONDS}s</span>
+                <span className="muted">{MAX_POLL_DURATION_SECONDS}s</span>
+              </div>
             </label>
 
             <label>
