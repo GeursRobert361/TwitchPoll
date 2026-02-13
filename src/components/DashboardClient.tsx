@@ -96,15 +96,16 @@ const sortOptions = (options: PollOptionSummary[]): PollOptionSummary[] =>
   [...options].sort((a, b) => a.position - b.position);
 
 const clampPercentage = (value: number): number => Math.min(100, Math.max(0, Math.round(value)));
+const MAX_POLL_DURATION_SECONDS = 15 * 60;
 
 const getDurationSliderValue = (draft: string | undefined, fallback: number | null): number => {
   const parsed = Number((draft ?? "").trim());
-  if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 3600) {
+  if (Number.isFinite(parsed) && parsed >= 1 && parsed <= MAX_POLL_DURATION_SECONDS) {
     return Math.round(parsed);
   }
 
   if (fallback !== null) {
-    return fallback;
+    return Math.min(MAX_POLL_DURATION_SECONDS, Math.max(1, Math.round(fallback)));
   }
 
   return 120;
@@ -360,6 +361,15 @@ export function DashboardClient({
 
     try {
       const duration = Number(newDuration);
+      const hasDuration = newDuration.trim().length > 0;
+
+      if (
+        hasDuration
+        && (!Number.isInteger(duration) || duration <= 0 || duration > MAX_POLL_DURATION_SECONDS)
+      ) {
+        alert(`Duration must be empty or a whole number between 1 and ${MAX_POLL_DURATION_SECONDS}`);
+        return;
+      }
 
       const response = await fetch("/api/polls", {
         method: "POST",
@@ -369,7 +379,7 @@ export function DashboardClient({
         body: JSON.stringify({
           title: newTitle,
           voteMode: newVoteMode,
-          durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : null,
+          durationSeconds: hasDuration ? duration : null,
           duplicateVotePolicy: newDuplicatePolicy,
           allowVoteChange,
           options: newOptions
@@ -452,8 +462,8 @@ export function DashboardClient({
 
     if (raw.length > 0) {
       const parsed = Number(raw);
-      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 60 * 60) {
-        alert("Duration must be empty or a whole number between 1 and 3600");
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_POLL_DURATION_SECONDS) {
+        alert(`Duration must be empty or a whole number between 1 and ${MAX_POLL_DURATION_SECONDS}`);
         return;
       }
     }
@@ -530,8 +540,8 @@ export function DashboardClient({
     let durationSeconds: number | null = null;
     if (durationRaw.length > 0) {
       const parsed = Number(durationRaw);
-      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 60 * 60) {
-        alert("Duration must be empty or a whole number between 1 and 3600");
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_POLL_DURATION_SECONDS) {
+        alert(`Duration must be empty or a whole number between 1 and ${MAX_POLL_DURATION_SECONDS}`);
         return;
       }
       durationSeconds = parsed;
@@ -1041,6 +1051,7 @@ export function DashboardClient({
                 onChange={(event) => setNewDuration(event.target.value)}
                 type="number"
                 min={0}
+                max={MAX_POLL_DURATION_SECONDS}
               />
             </label>
 
@@ -1278,7 +1289,7 @@ export function DashboardClient({
                       <input
                         type="number"
                         min={1}
-                        max={3600}
+                        max={MAX_POLL_DURATION_SECONDS}
                         value={editingDraft.durationSeconds}
                         onChange={(event) =>
                           setEditingDraft((current) =>
@@ -1493,7 +1504,7 @@ export function DashboardClient({
                     <input
                       type="range"
                       min={1}
-                      max={3600}
+                      max={MAX_POLL_DURATION_SECONDS}
                       step={5}
                       value={getDurationSliderValue(durationDraftByPoll[poll.id], poll.durationSeconds)}
                       onChange={(event) =>
@@ -1506,7 +1517,7 @@ export function DashboardClient({
                   </label>
                   <div className="row" style={{ marginTop: "0.45rem", justifyContent: "space-between" }}>
                     <span className="muted">1s</span>
-                    <span className="muted">3600s</span>
+                    <span className="muted">{MAX_POLL_DURATION_SECONDS}s</span>
                   </div>
                   <div className="row" style={{ marginTop: "0.45rem" }}>
                     <button

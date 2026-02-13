@@ -10,6 +10,7 @@ import { broadcastPollState, broadcastPollUpdate } from "@/server/realtime";
 import { twitchIrcClient } from "@/server/twitchIrcClient";
 
 export const runtime = "nodejs";
+const MAX_POLL_DURATION_SECONDS = 15 * 60;
 
 type Params = { params: { pollId: string } };
 
@@ -88,13 +89,17 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
       });
     }
 
-    const endsAt = poll.durationSeconds ? new Date(now.getTime() + poll.durationSeconds * 1000) : null;
+    const effectiveDurationSeconds = poll.durationSeconds
+      ? Math.min(poll.durationSeconds, MAX_POLL_DURATION_SECONDS)
+      : null;
+    const endsAt = effectiveDurationSeconds ? new Date(now.getTime() + effectiveDurationSeconds * 1000) : null;
 
     await prisma.poll.update({
       where: { id: poll.id },
       data: {
         state: PollState.LIVE,
         resultsPublished: true,
+        durationSeconds: effectiveDurationSeconds,
         startsAt: now,
         endsAt,
         updatedAt: now

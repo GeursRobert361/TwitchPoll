@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { requireWorkspaceSession } from "@/lib/session";
 
 export const runtime = "nodejs";
+const MAX_POLL_DURATION_SECONDS = 15 * 60;
 
 type Params = { params: { pollId: string } };
 
@@ -33,7 +34,7 @@ const defaultKeywordForMode = (voteMode: VoteMode, index: number): string => {
 const updateSchema = z.object({
   title: z.string().trim().min(3).max(200).optional(),
   voteMode: z.nativeEnum(VoteMode).optional(),
-  durationSeconds: z.number().int().positive().max(60 * 60).nullable().optional(),
+  durationSeconds: z.number().int().positive().max(MAX_POLL_DURATION_SECONDS).nullable().optional(),
   duplicateVotePolicy: z.nativeEnum(DuplicateVotePolicy).optional(),
   allowVoteChange: z.boolean().optional(),
   options: z.array(
@@ -50,7 +51,10 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
     const parsed = updateSchema.safeParse(await request.json().catch(() => ({})));
 
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid duration. Use null or an integer between 1 and 3600." }, { status: 400 });
+      return NextResponse.json(
+        { error: `Invalid duration. Use null or an integer between 1 and ${MAX_POLL_DURATION_SECONDS}.` },
+        { status: 400 }
+      );
     }
 
     const poll = await prisma.poll.findFirst({

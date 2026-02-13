@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { requireWorkspaceSession } from "@/lib/session";
 
 export const runtime = "nodejs";
+const MAX_POLL_DURATION_SECONDS = 15 * 60;
 
 const normalizeKeyword = (value: string): string =>
   value
@@ -31,7 +32,7 @@ const defaultKeywordForMode = (voteMode: VoteMode, index: number): string => {
 const createPollSchema = z.object({
   title: z.string().trim().min(3).max(200),
   voteMode: z.nativeEnum(VoteMode),
-  durationSeconds: z.number().int().positive().max(60 * 60).nullable().optional(),
+  durationSeconds: z.number().int().positive().max(MAX_POLL_DURATION_SECONDS).nullable().optional(),
   duplicateVotePolicy: z.nativeEnum(DuplicateVotePolicy).default(DuplicateVotePolicy.LATEST),
   allowVoteChange: z.boolean().default(true),
   options: z.array(

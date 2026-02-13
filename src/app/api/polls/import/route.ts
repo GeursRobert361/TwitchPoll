@@ -11,6 +11,7 @@ export const runtime = "nodejs";
 
 const BACKUP_FORMAT = "twitch-poll-overlay-polls-backup";
 const BACKUP_VERSION = 1;
+const MAX_POLL_DURATION_SECONDS = 15 * 60;
 
 const normalizeKeyword = (value: string): string =>
   value
@@ -34,7 +35,7 @@ const defaultKeywordForMode = (voteMode: VoteMode, index: number): string => {
 const importedPollSchema = z.object({
   title: z.string().trim().min(3).max(200),
   voteMode: z.nativeEnum(VoteMode),
-  durationSeconds: z.number().int().positive().max(60 * 60).nullable().optional(),
+  durationSeconds: z.number().int().positive().max(MAX_POLL_DURATION_SECONDS).nullable().optional(),
   duplicateVotePolicy: z.nativeEnum(DuplicateVotePolicy).default(DuplicateVotePolicy.LATEST),
   allowVoteChange: z.boolean().default(true),
   options: z.array(
@@ -115,4 +116,3 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return handleApiError(error);
   }
 }
-
