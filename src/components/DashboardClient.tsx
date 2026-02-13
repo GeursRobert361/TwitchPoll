@@ -96,23 +96,33 @@ const sortOptions = (options: PollOptionSummary[]): PollOptionSummary[] =>
   [...options].sort((a, b) => a.position - b.position);
 
 const clampPercentage = (value: number): number => Math.min(100, Math.max(0, Math.round(value)));
+const MIN_POLL_DURATION_SECONDS = 30;
 const MAX_POLL_DURATION_SECONDS = 15 * 60;
+const POLL_DURATION_STEP_SECONDS = 30;
+
+const clampDurationSeconds = (seconds: number): number =>
+  Math.min(MAX_POLL_DURATION_SECONDS, Math.max(MIN_POLL_DURATION_SECONDS, Math.round(seconds)));
+
+const snapDurationToSliderStep = (seconds: number): number => {
+  const clamped = clampDurationSeconds(seconds);
+  return Math.ceil(clamped / POLL_DURATION_STEP_SECONDS) * POLL_DURATION_STEP_SECONDS;
+};
 
 const getDurationSliderValue = (draft: string | undefined, fallback: number | null): number => {
   const parsed = Number((draft ?? "").trim());
-  if (Number.isFinite(parsed) && parsed >= 1 && parsed <= MAX_POLL_DURATION_SECONDS) {
-    return Math.round(parsed);
+  if (Number.isFinite(parsed) && parsed >= MIN_POLL_DURATION_SECONDS && parsed <= MAX_POLL_DURATION_SECONDS) {
+    return snapDurationToSliderStep(parsed);
   }
 
   if (fallback !== null) {
-    return Math.min(MAX_POLL_DURATION_SECONDS, Math.max(1, Math.round(fallback)));
+    return snapDurationToSliderStep(fallback);
   }
 
   return 120;
 };
 
 const formatRoundedHalfMinutes = (seconds: number): string => {
-  const halfMinutes = Math.ceil(seconds / 30) / 2;
+  const halfMinutes = Math.ceil(seconds / POLL_DURATION_STEP_SECONDS) / 2;
   const hasHalf = halfMinutes % 1 !== 0;
 
   return halfMinutes.toLocaleString(undefined, {
@@ -1517,9 +1527,9 @@ export function DashboardClient({
                     min)
                     <input
                       type="range"
-                      min={1}
+                      min={MIN_POLL_DURATION_SECONDS}
                       max={MAX_POLL_DURATION_SECONDS}
-                      step={5}
+                      step={POLL_DURATION_STEP_SECONDS}
                       value={getDurationSliderValue(durationDraftByPoll[poll.id], poll.durationSeconds)}
                       onChange={(event) =>
                         setDurationDraftByPoll((current) => ({
@@ -1530,7 +1540,7 @@ export function DashboardClient({
                     />
                   </label>
                   <div className="row" style={{ marginTop: "0.45rem", justifyContent: "space-between" }}>
-                    <span className="muted">1s</span>
+                    <span className="muted">{MIN_POLL_DURATION_SECONDS}s</span>
                     <span className="muted">{MAX_POLL_DURATION_SECONDS}s</span>
                   </div>
                   <div className="row" style={{ marginTop: "0.45rem" }}>
