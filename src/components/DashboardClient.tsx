@@ -111,6 +111,16 @@ const getDurationSliderValue = (draft: string | undefined, fallback: number | nu
   return 120;
 };
 
+const formatRoundedHalfMinutes = (seconds: number): string => {
+  const halfMinutes = Math.ceil(seconds / 30) / 2;
+  const hasHalf = halfMinutes % 1 !== 0;
+
+  return halfMinutes.toLocaleString(undefined, {
+    minimumFractionDigits: hasHalf ? 1 : 0,
+    maximumFractionDigits: 1
+  });
+};
+
 const buildPollEditorDraft = (poll: PollSummary): PollEditorDraft => ({
   title: poll.title,
   voteMode: poll.voteMode,
@@ -1500,7 +1510,11 @@ export function DashboardClient({
                   }}
                 >
                   <label>
-                    Duration: {getDurationSliderValue(durationDraftByPoll[poll.id], poll.durationSeconds)}s
+                    Duration: {getDurationSliderValue(durationDraftByPoll[poll.id], poll.durationSeconds)}s (
+                    {formatRoundedHalfMinutes(
+                      getDurationSliderValue(durationDraftByPoll[poll.id], poll.durationSeconds)
+                    )}{" "}
+                    min)
                     <input
                       type="range"
                       min={1}
